@@ -37,7 +37,9 @@
 #define MIN_FW_VERSION      FW_VERSION_NUM(3, 3, 5)
 #define MAX_VERIFIED_FW     FW_VERSION_NUM(4, 2, 0)
 #define FW_RANGE_TEXT       "3.3.5 - 4.2.0"
-#define FW_UPDATE_GUIDE     "Please update the TitanTCS firmware with the HOBYM firmware updater."
+#define FW_UPDATE_GUIDE     "Please update the TitanTCS firmware. Firmware and updater: " \
+                            "https://www.hobym.net/firmware or " \
+                            "https://drive.google.com/drive/folders/1_BjB_LxA97z9CrsWz_TQp3jLq_8yq58i"
 #define MAX_CMD_LEN     256
 
 static std::unique_ptr<TitanTCS> titanTCS(new TitanTCS());
