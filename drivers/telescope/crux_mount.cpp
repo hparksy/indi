@@ -29,17 +29,22 @@
 
 #define PRODUCT_NAME    "TitanTCS CRUX"
 #define HANDSHAKE_NAME  "TiTaN TCS"
-// 3.3.5 added the $hP/$?ts/$?tm/$?tr/$?pe status queries polled every second.
-// Older firmware treats ':hP?#' as ':hP#' and parks the mount.
-#define MIN_FW_VERSION  "3.3.5"
+// Supported TitanTCS firmware: 3.3.5 to 4.2.0 (every command checked against firmware source).
+//  - Below 3.3.5 the connection is refused. 3.3.5 added the $hP/$?ts/$?tm/$?tr/$?pe status
+//    queries polled every second; older firmware treats ':hP?#' as ':hP#' and parks the mount.
+//  - Above 4.2.0 the driver connects with a warning: not yet verified.
 #define FW_VERSION_NUM(major, minor, patch) ((major) * 10000 + (minor) * 100 + (patch))
+#define MIN_FW_VERSION      FW_VERSION_NUM(3, 3, 5)
+#define MAX_VERIFIED_FW     FW_VERSION_NUM(4, 2, 0)
+#define FW_RANGE_TEXT       "3.3.5 - 4.2.0"
+#define FW_UPDATE_GUIDE     "Please update the TitanTCS firmware with the HOBYM firmware updater."
 #define MAX_CMD_LEN     256
 
 static std::unique_ptr<TitanTCS> titanTCS(new TitanTCS());
 
 TitanTCS::TitanTCS() : GI(this)
 {
-    setVersion(1, 0);
+    setVersion(1, 1);
 
     SetTelescopeCapability(
         TELESCOPE_CAN_GOTO |
@@ -309,9 +314,8 @@ bool TitanTCS::ISNewText(const char *dev, const char *name, char *texts[], char 
 ***************************************************************************************/
 bool TitanTCS::Handshake()
 {
-    if(!isConnected())
-        return true;
-
+    // Called by the connection plugin before the device is marked connected,
+    // so isConnected() is always false here: do not skip the checks on it.
     char szResponse[MAX_CMD_LEN] = { 0 };
 
     if(CommandResponseStr("#:GVP#", "", '#', szResponse, sizeof(szResponse)))
@@ -322,18 +326,28 @@ bool TitanTCS::Handshake()
             if(CommandResponseStr("#:GVN#", "", '#', szResponse, sizeof(szResponse)))
             {
                 LOGF_INFO("Firmware Version = '%s'", szResponse);
-                int major = 0, minor = 0, patch = 0, minMajor = 0, minMinor = 0, minPatch = 0;
-                sscanf(MIN_FW_VERSION, "%d.%d.%d", &minMajor, &minMinor, &minPatch);
+                int major = 0, minor = 0, patch = 0;
                 if(sscanf(szResponse, "%d.%d.%d", &major, &minor, &patch) >= 2)
                     m_FwVersion = FW_VERSION_NUM(major, minor, patch);
                 else
                     m_FwVersion = 0;
 
-                if(m_FwVersion >= FW_VERSION_NUM(minMajor, minMinor, minPatch))
-                    return true;
+                if(m_FwVersion == 0)
+                {
+                    LOGF_ERROR("Firmware version '%s' cannot be recognized. Supported firmware: %s. " FW_UPDATE_GUIDE,
+                               szResponse, FW_RANGE_TEXT);
+                }
+                else if(m_FwVersion < MIN_FW_VERSION)
+                {
+                    LOGF_ERROR("Firmware %s is too old for this driver. Supported firmware: %s. " FW_UPDATE_GUIDE,
+                               szResponse, FW_RANGE_TEXT);
+                }
                 else
                 {
-                    LOGF_ERROR("Firmware version '%s' is too old. Required > %s", szResponse, MIN_FW_VERSION);
+                    if(m_FwVersion > MAX_VERIFIED_FW)
+                        LOGF_WARN("Firmware %s is newer than this driver has been verified with (%s). "
+                                  "If the mount behaves unexpectedly, please update the INDI driver.", szResponse, FW_RANGE_TEXT);
+                    return true;
                 }
             }
             else

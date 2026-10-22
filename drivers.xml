@@ -185,7 +185,7 @@
         </device>
         <device label="CRUX TitanTCS" manufacturer="HOBYM">
             <driver name="CRUX TitanTCS">indi_crux_mount</driver>
-            <version>1.0</version>
+            <version>1.1</version>
         </device>
         <device label="Sky Scan" manufacturer="SkyWatcher">
             <driver name="SynScan">indi_synscan_telescope</driver>
