@@ -47,6 +47,8 @@ class TitanTCS : public INDI::Telescope, public INDI::GuiderInterface
 
     private:
         int m_Connect;
+        // Firmware version from ':GVN#' as major*10000 + minor*100 + patch (0 = unknown)
+        int m_FwVersion {0};
         // Lightweight-poll slew/park completion detection state
         double m_LastRA {0};
         double m_LastDEC {0};

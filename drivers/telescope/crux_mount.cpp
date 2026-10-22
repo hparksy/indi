@@ -29,7 +29,10 @@
 
 #define PRODUCT_NAME    "TitanTCS CRUX"
 #define HANDSHAKE_NAME  "TiTaN TCS"
-#define MIN_FW_VERSION  "3.1.0"
+// 3.3.5 added the $hP/$?ts/$?tm/$?tr/$?pe status queries polled every second.
+// Older firmware treats ':hP?#' as ':hP#' and parks the mount.
+#define MIN_FW_VERSION  "3.3.5"
+#define FW_VERSION_NUM(major, minor, patch) ((major) * 10000 + (minor) * 100 + (patch))
 #define MAX_CMD_LEN     256
 
 static std::unique_ptr<TitanTCS> titanTCS(new TitanTCS());
@@ -319,8 +322,14 @@ bool TitanTCS::Handshake()
             if(CommandResponseStr("#:GVN#", "", '#', szResponse, sizeof(szResponse)))
             {
                 LOGF_INFO("Firmware Version = '%s'", szResponse);
-                int comp = strcmp(szResponse, MIN_FW_VERSION);
-                if(comp >= 0)
+                int major = 0, minor = 0, patch = 0, minMajor = 0, minMinor = 0, minPatch = 0;
+                sscanf(MIN_FW_VERSION, "%d.%d.%d", &minMajor, &minMinor, &minPatch);
+                if(sscanf(szResponse, "%d.%d.%d", &major, &minor, &patch) >= 2)
+                    m_FwVersion = FW_VERSION_NUM(major, minor, patch);
+                else
+                    m_FwVersion = 0;
+
+                if(m_FwVersion >= FW_VERSION_NUM(minMajor, minMinor, minPatch))
                     return true;
                 else
                 {
@@ -599,12 +608,11 @@ bool TitanTCS::Goto(double ra, double dec)
     }
     if(rtnCode != '0')
     {
-        LOGF_ERROR("Goto / Error Code = '%c'", rtnCode);
-        // Send abort to clear the mount's internal goto-error state.
-        // Without this, the firmware retains the failed target and may
-        // set tracking status bit5 (goto-error flag), which can cause
-        // the mount to self-park after a timeout.
-        SendCommand("#:Q#");
+        // Firmware replies '1_<reason>#' (e.g. 1_POS_NOT_SYNCED#, 1_ERROR2# below horizon).
+        // The mount does not move and keeps no error state, so no abort is needed.
+        char szReason[MAX_CMD_LEN] = { 0 };
+        ReadResponse(szReason, sizeof(szReason), '#', 1);
+        LOGF_ERROR("Goto rejected by mount: '%c%s'", rtnCode, szReason);
         return false;
     }
 
@@ -1162,43 +1170,23 @@ bool TitanTCS::GetMountParams(bool bAll)
     {
         LOGF_DEBUG("Tracking Status %d", info.TrackingStatus);
 
-        // Bits 2-3 indicate actual axis motion (RA/DEC slewing).
-        // Bits 4-5 are goto status flags. Bit5 alone (value 0x20) can
-        // indicate a goto-error/pending state where the mount is NOT
-        // physically moving. Only treat as SLEWING when axes are
-        // actually in motion (bits 2-3) or a valid goto is active
-        // (bit4 set together with motion).
-        bool axisMoving = (info.TrackingStatus & 0x0C) != 0;   // bit2 or bit3: RA/DEC slew
-        bool gotoActive = (info.TrackingStatus & 0x30) != 0;   // bit4 or bit5: goto status
+        // Firmware $?ts bits:
+        //   bit0 DEC tracking (copies bit1 before 3.6), bit1 RA tracking,
+        //   bit2 RA goto/slew speed, bit3 DEC goto/slew speed,
+        //   bit4 goto in progress (including fine-goto passes and the park slew),
+        //   bit5 target set by :Sr/:Sd (stays set after a rejected :MS#, so it is NOT an error flag).
+        // Never send ':Q#' from here: it cancels fine-goto passes and pulse guides,
+        // and during a park slew it makes the firmware park at the current position.
+        // Goto errors are reported by the ':MS#' reply in Goto().
+        bool axisMoving = (info.TrackingStatus & 0x0C) != 0;
+        bool gotoActive = (info.TrackingStatus & 0x10) != 0;
 
-        if(axisMoving)
-        {
+        if(axisMoving || gotoActive)
             TrackState = SCOPE_SLEWING;
-        }
-        else if(gotoActive && !(info.TrackingStatus & 0x03))
-        {
-            // Goto flag set but no tracking bits — mount stopped, error state
-            LOGF_WARN("Goto error state detected (tracking status %d), sending abort", info.TrackingStatus);
-            SendCommand("#:Q#");
-            TrackState = SCOPE_IDLE;
-        }
-        else if(gotoActive && (info.TrackingStatus & 0x03))
-        {
-            // Goto flag set but mount is still tracking (e.g. status 35 = 0x23)
-            // This is the goto-error state where axes track but goto failed.
-            // Clear it and remain in tracking.
-            LOGF_WARN("Goto error flag with tracking active (status %d), sending abort", info.TrackingStatus);
-            SendCommand("#:Q#");
+        else if(info.TrackingStatus & 0x02)
             TrackState = SCOPE_TRACKING;
-        }
-        else if(info.TrackingStatus == 3)
-        {
-            TrackState = SCOPE_TRACKING;
-        }
         else
-        {
             TrackState = SCOPE_IDLE;
-        }
     }
     // Parking Status
     if(GetParamNumber(szResponse, szToken, sizeof(szToken) - 1, "$hP", '#', NULL, &info.Parking))
